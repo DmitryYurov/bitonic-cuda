@@ -2,9 +2,9 @@
 #include <random>
 
 __device__ void swap(int &a, int &b) noexcept {
-  const int temp = a;
+  const int tmp = a;
   a = b;
-  b = temp;
+  b = tmp;
 }
 
 __global__ void bitonic(int *data) {
@@ -19,12 +19,12 @@ __global__ void bitonic(int *data) {
   for (unsigned k = 2U; k <= blockDim.x; k <<= 1U) {
     // in the inner loop we swap elements with their partners
     for (unsigned j = k >> 1U; j > 0U; j >>= 1U) {
-      const unsigned partner_idx = thr_id ^ j;
-      const bool is_left = (thr_id & k) == 0;
-      const bool l2r = partner_idx > thr_id;
-      const auto diff = loc_data[thr_id] - loc_data[partner_idx];
+      const unsigned partner_idx =
+          thr_id | j; // always greater or equal to thr_id
+      const bool is_left = (grid_id & k) == 0;
       const bool to_swap =
-          l2r && ((is_left && diff > 0) || (!is_left && diff < 0));
+          (is_left && (loc_data[thr_id] > loc_data[partner_idx])) ||
+          (!is_left && (loc_data[thr_id] < loc_data[partner_idx]));
       if (to_swap) {
         swap(loc_data[thr_id], loc_data[partner_idx]);
       }
@@ -33,6 +33,30 @@ __global__ void bitonic(int *data) {
   }
 
   data[grid_id] = loc_data[thr_id];
+}
+
+__global__ void bitonic_iteration(int *data, unsigned tonic_size,
+                                  unsigned span) {
+  const unsigned grid_id = blockIdx.x * blockDim.x + threadIdx.x;
+
+  const unsigned partner_idx = grid_id | span;
+  const bool is_left = (grid_id & tonic_size) == 0;
+  const bool to_swap = (is_left && (data[grid_id] > data[partner_idx])) ||
+          (!is_left && (data[grid_id] < data[partner_idx]));
+  if (to_swap) {
+    swap(data[grid_id], data[partner_idx]);
+  }
+}
+
+__host__ void bitonic_global(int *data, unsigned data_size, unsigned grid_size,
+                             unsigned block_size) {
+  unsigned size = block_size << 1U;
+  while (size <= data_size) {
+    for (unsigned span = size >> 1U; span > 0U; span >>= 1U) {
+      bitonic_iteration<<<grid_size, block_size>>>(data, size, span);
+    }
+    size <<= 1U;
+  }
 }
 
 bool checkCudaError(cudaError_t err) {
@@ -115,7 +139,7 @@ int main() {
   std::mt19937 gen{rd()};
   auto distr = std::uniform_int_distribution<int>(min_val, max_val);
 
-  const size_t data_size = 32U;
+  const size_t data_size = 2048U;
 
   std::vector<int> sample_data{};
   sample_data.reserve(data_size);
@@ -141,6 +165,9 @@ int main() {
   const unsigned grid_size = data_size / block_size;
 
   bitonic<<<grid_size, block_size, block_size * sizeof(int)>>>(device_data);
+  if (grid_size > 1U) {
+    bitonic_global(device_data, data_size, grid_size, block_size);
+  }
 
   cudaMemcpy(sample_data.data(), device_data, data_size * sizeof(int),
              cudaMemcpyDeviceToHost);
