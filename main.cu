@@ -63,6 +63,8 @@ int main() {
     return 0;
   }
 
+  cudaSetDevice(0); // setting the first available device
+
   cudaDeviceProp device_prop{};
   if (!checkCudaError(cudaGetDeviceProperties(&device_prop, 0))) {
     return 1;
@@ -78,7 +80,8 @@ int main() {
   std::mt19937 gen{rd()};
   auto distr = std::uniform_int_distribution<int>(min_val, max_val);
 
-  static constexpr size_t data_size = 32;
+  const size_t data_size = 32U;
+
   std::vector<int> sample_data{};
   sample_data.reserve(data_size);
   for (size_t i = 0; i < data_size; ++i) {
