@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 4.0)
+cmake_minimum_required(VERSION 3.26)
 project(bitonic LANGUAGES CXX CUDA)
 
 set(CMAKE_CUDA_STANDARD 23)
