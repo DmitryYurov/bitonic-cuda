@@ -1,3 +1,4 @@
+#include <chrono>
 #include <iostream>
 #include <random>
 
@@ -7,7 +8,7 @@ __device__ void swap(int &a, int &b) noexcept {
   b = tmp;
 }
 
-__global__ void bitonic(int *data) {
+__global__ void bitonic_shared(int *data) {
   extern __shared__ int loc_data[];
   const unsigned thr_id = threadIdx.x;
   const unsigned grid_id = blockIdx.x * blockDim.x + thr_id;
@@ -19,12 +20,10 @@ __global__ void bitonic(int *data) {
   for (unsigned k = 2U; k <= blockDim.x; k <<= 1U) {
     // in the inner loop we swap elements with their partners
     for (unsigned j = k >> 1U; j > 0U; j >>= 1U) {
-      const unsigned partner_idx =
-          thr_id | j; // always greater or equal to thr_id
+      const unsigned partner_idx = thr_id | j; // always greater or equal to thr_id
       const bool is_left = (grid_id & k) == 0;
       const bool to_swap =
-          (is_left && (loc_data[thr_id] > loc_data[partner_idx])) ||
-          (!is_left && (loc_data[thr_id] < loc_data[partner_idx]));
+          (is_left && (loc_data[thr_id] > loc_data[partner_idx])) || (!is_left && (loc_data[thr_id] < loc_data[partner_idx]));
       if (to_swap) {
         swap(loc_data[thr_id], loc_data[partner_idx]);
       }
@@ -35,21 +34,18 @@ __global__ void bitonic(int *data) {
   data[grid_id] = loc_data[thr_id];
 }
 
-__global__ void bitonic_iteration(int *data, unsigned tonic_size,
-                                  unsigned span) {
+__global__ void bitonic_iteration(int *data, unsigned tonic_size, unsigned span) {
   const unsigned grid_id = blockIdx.x * blockDim.x + threadIdx.x;
 
   const unsigned partner_idx = grid_id | span;
   const bool is_left = (grid_id & tonic_size) == 0;
-  const bool to_swap = (is_left && (data[grid_id] > data[partner_idx])) ||
-          (!is_left && (data[grid_id] < data[partner_idx]));
+  const bool to_swap = (is_left && (data[grid_id] > data[partner_idx])) || (!is_left && (data[grid_id] < data[partner_idx]));
   if (to_swap) {
     swap(data[grid_id], data[partner_idx]);
   }
 }
 
-__host__ void bitonic_global(int *data, unsigned data_size, unsigned grid_size,
-                             unsigned block_size) {
+__host__ void bitonic_global(int *data, unsigned data_size, unsigned grid_size, unsigned block_size) {
   unsigned size = block_size << 1U;
   while (size <= data_size) {
     for (unsigned span = size >> 1U; span > 0U; span >>= 1U) {
@@ -103,12 +99,55 @@ unsigned floor_2(unsigned val) {
   return res == val ? res : res >> 1U;
 }
 
-unsigned get_block_size(unsigned data_size, unsigned max_threads_per_block,
-                        unsigned shared_mem_per_block) {
+unsigned get_block_size(unsigned data_size, unsigned max_threads_per_block, unsigned shared_mem_per_block) {
   // we assume that data_size is already a power of two
-  const unsigned limit = std::min(floor_2(max_threads_per_block),
-                                  floor_2(shared_mem_per_block / sizeof(int)));
+  const unsigned limit = std::min(floor_2(max_threads_per_block), floor_2(shared_mem_per_block / sizeof(int)));
   return std::min(limit, data_size);
+}
+
+// runs bitonic sort, measures its performance and compares it to std::sort
+void run_sort(std::vector<int> to_sort, const cudaDeviceProp &device_prop) {
+  const size_t data_size = to_sort.size();
+
+  int *device_data = nullptr;
+  if (!checkCudaError(cudaMalloc(&device_data, data_size * sizeof(int)))) {
+    return;
+  }
+  if (!checkCudaError(cudaMemcpy(device_data, to_sort.data(), data_size * sizeof(int), cudaMemcpyHostToDevice))) {
+    return;
+  }
+
+  // finding the block size
+  const unsigned block_size = get_block_size(data_size, device_prop.maxThreadsPerBlock, device_prop.sharedMemPerBlock);
+  const unsigned grid_size = data_size / block_size;
+
+  const auto cuda_start = std::chrono::high_resolution_clock::now();
+  bitonic_shared<<<grid_size, block_size, block_size * sizeof(int)>>>(device_data);
+  if (grid_size > 1U) {
+    bitonic_global(device_data, data_size, grid_size, block_size);
+  }
+  cudaDeviceSynchronize();
+  const auto cuda_end = std::chrono::high_resolution_clock::now();
+
+  auto sort_result = std::vector<int>(data_size, 0);
+  cudaMemcpy(sort_result.data(), device_data, data_size * sizeof(int), cudaMemcpyDeviceToHost);
+
+  cudaFree(device_data);
+
+  // running std::sort for comparison
+  const auto cpu_start = std::chrono::high_resolution_clock::now();
+  std::sort(to_sort.begin(), to_sort.end());
+  const auto cpu_end = std::chrono::high_resolution_clock::now();
+
+  // the results of running both algorithms must be the same
+  if (sort_result != to_sort) {
+    std::cerr << "Results are different" << std::endl;
+    return;
+  }
+
+  const auto cuda_time = std::chrono::duration_cast<std::chrono::milliseconds>(cuda_end - cuda_start).count();
+  const auto cpu_time = std::chrono::duration_cast<std::chrono::milliseconds>(cpu_end - cpu_start).count();
+  std::cout << std::format("{:8} kB {:8} ms {:8} ms", data_size / 256U, cuda_time, cpu_time) << std::endl;
 }
 
 int main() {
@@ -130,53 +169,26 @@ int main() {
   }
 
   std::cout << device_prop.name << std::endl;
-  std::cout << "Device capability: " << device_prop.major << "."
-            << device_prop.minor << std::endl;
+  std::cout << "Device capability: " << device_prop.major << "." << device_prop.minor << std::endl;
 
-  static constexpr int min_val = -10;
-  static constexpr int max_val = 10;
+  static constexpr int min_val = std::numeric_limits<int>::min();
+  static constexpr int max_val = std::numeric_limits<int>::max();
   std::random_device rd;
   std::mt19937 gen{rd()};
   auto distr = std::uniform_int_distribution<int>(min_val, max_val);
 
-  const size_t data_size = 2048U;
+  // printing header for the performance table
+  std::cout << std::format("{:10} | {:10} | {:10}", "Data size", "GPU time", "CPU time") << std::endl;
 
-  std::vector<int> sample_data{};
-  sample_data.reserve(data_size);
-  for (size_t i = 0; i < data_size; ++i) {
-    sample_data.push_back(distr(gen));
+  for (size_t i = 0U, data_size = 256U; i < 19U; ++i, data_size <<= 1U) {
+    std::vector<int> sample_data{};
+    sample_data.reserve(data_size);
+    for (size_t j = 0; j < data_size; ++j) {
+      sample_data.push_back(distr(gen));
+    }
+
+    run_sort(std::move(sample_data), device_prop);
   }
-  std::cout << "Initial state:" << std::endl;
-  print_array(sample_data, data_size);
-
-  int *device_data = nullptr;
-  if (!checkCudaError(cudaMalloc(&device_data, data_size * sizeof(int)))) {
-    return 1;
-  }
-  if (!checkCudaError(cudaMemcpy(device_data, sample_data.data(),
-                                 data_size * sizeof(int),
-                                 cudaMemcpyHostToDevice))) {
-    return 1;
-  }
-
-  // finding the block size
-  const unsigned block_size = get_block_size(
-      data_size, device_prop.maxThreadsPerBlock, device_prop.sharedMemPerBlock);
-  const unsigned grid_size = data_size / block_size;
-
-  bitonic<<<grid_size, block_size, block_size * sizeof(int)>>>(device_data);
-  if (grid_size > 1U) {
-    bitonic_global(device_data, data_size, grid_size, block_size);
-  }
-
-  cudaMemcpy(sample_data.data(), device_data, data_size * sizeof(int),
-             cudaMemcpyDeviceToHost);
-
-  cudaDeviceSynchronize();
-  cudaFree(device_data);
-
-  std::cout << "After sorting:" << std::endl;
-  print_array(sample_data, data_size);
 
   return 0;
 }
