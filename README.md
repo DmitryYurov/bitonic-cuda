@@ -1,6 +1,6 @@
 # Bitonic Sort
 
-This project implements a [bitonic sorting algorithm](https://en.wikipedia.org/wiki/Bitonic_sorter) using CUDA.
+This project implements the [bitonic sorting algorithm](https://en.wikipedia.org/wiki/Bitonic_sorter) using CUDA.
 Bitonic sort is a sorting algorithm particularly well-suited for parallel implementation.
 
 ## What does this project do?
