@@ -13,10 +13,10 @@ bool checkCudaError(cudaError_t err) {
   return true;
 }
 
-template <typename Deleter> using cuda_ptr = std::unique_ptr<int[], Deleter>; /// A smart point to handle cuda-side arrays
+template <typename Deleter> using cuda_ptr = std::unique_ptr<int[], Deleter>; /// A smart pointer to handle cuda-side arrays
 
 /**
- * @brief Allocates an array of integers on the device side and return cuda_ptr to it.
+ * @brief Allocates an array of integers on the device side and returns cuda_ptr to it.
  *
  * @param size The size of the array of integers to allocate
  * @return a smart pointer to the allocated array, empty in case of allocation failure
@@ -34,6 +34,19 @@ auto allocate_device_memory(size_t size) {
   }
 
   return result;
+}
+
+/**
+ * @brief Calculates the execution time between two time points in milliseconds
+ *
+ * @param start The starting time point of the measurement interval
+ * @param end The ending time point of the measurement interval
+ * @return The duration between start and end in milliseconds as a double value
+ */
+double exec_time(std::chrono::high_resolution_clock::time_point start, std::chrono::high_resolution_clock::time_point end) {
+  using namespace std::chrono;
+  const auto time_us = duration_cast<microseconds>(end - start).count();
+  return static_cast<double>(time_us) / 1000.0;
 }
 
 // runs bitonic sort, measures its performance and compares it to std::sort
@@ -70,9 +83,9 @@ void run_sort(std::vector<int> to_sort, const cudaDeviceProp &device_prop) {
     return;
   }
 
-  const auto cuda_time = std::chrono::duration_cast<std::chrono::milliseconds>(cuda_end - cuda_start).count();
-  const auto cpu_time = std::chrono::duration_cast<std::chrono::milliseconds>(cpu_end - cpu_start).count();
-  std::cout << std::format("{:8} kB {:8} ms {:8} ms", data_size / 256U, cuda_time, cpu_time) << std::endl;
+  const auto cuda_time = exec_time(cuda_start, cuda_end);
+  const auto cpu_time = exec_time(cpu_start, cpu_end);
+  std::cout << std::format("{:8} kB {:8.2f} ms {:8.2f} ms", data_size / 256U, cuda_time, cpu_time) << std::endl;
 }
 
 int main() {
