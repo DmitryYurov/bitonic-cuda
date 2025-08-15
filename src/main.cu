@@ -2,7 +2,7 @@
 #include <iostream>
 #include <random>
 
-#include "../includes/bitonic.cuh"
+#include "bitonic.cuh"
 
 bool checkCudaError(cudaError_t err) {
   if (err != cudaSuccess) {
@@ -49,7 +49,20 @@ double exec_time(std::chrono::high_resolution_clock::time_point start, std::chro
   return static_cast<double>(time_us) / 1000.0;
 }
 
-// runs bitonic sort, measures its performance and compares it to std::sort
+/**
+ * @brief Runs bitonic sort on GPU, measures its performance and compares it to std::sort
+ *
+ * This function performs the following steps:
+ * 1. Allocates device memory and copies input data to GPU
+ * 2. Runs bitonic sort on GPU and measures execution time
+ * 3. Copies results back to host memory
+ * 4. Runs std::sort on CPU for comparison and measures execution time
+ * 5. Validates that both sorting results match
+ * 6. Prints performance metrics
+ *
+ * @param to_sort Vector containing integers to sort
+ * @param device_prop CUDA device properties used for sorting
+ */
 void run_sort(std::vector<int> to_sort, const cudaDeviceProp &device_prop) {
   const size_t data_size = to_sort.size();
 

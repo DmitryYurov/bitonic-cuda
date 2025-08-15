@@ -1,7 +1,5 @@
 #include "../includes/bitonic.cuh"
 
-#include <chrono>
-
 namespace {
 /**
  * @brief Device-side swap implementation
@@ -62,6 +60,16 @@ __global__ void bitonic_shared(int *data) {
   data[data_id] = loc_data[thr_id];
 }
 
+/**
+ * @brief Single iteration of the bitonic sort algorithm using global memory
+ *
+ * @param data Device-allocated array being sorted
+ * @param tonic_size Size of the current bitonic sequence being sorted
+ * @param stride Distance between elements being compared and potentially swapped
+ * @note This kernel is launched with grid_size blocks, each containing block_size threads
+ * @note Each thread processes one element of the array by comparing and potentially swapping
+ *       it with its partner element determined by the stride
+ */
 __global__ void iteration(int *data, unsigned tonic_size, unsigned stride) {
   const unsigned data_id = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -91,39 +99,26 @@ __host__ void bitonic_global(int *data, unsigned data_size, unsigned grid_size, 
   }
 }
 
-// rounds value down to the nearest power of 2 such that the result
-// is greater or equal to the input value
-// returns 1 if the input is less than 2
-unsigned ceil_2(unsigned val) {
-  if (val <= 1U) {
-    return 1U;
-  }
-
-  unsigned res = 2U;
-  while (res < val) {
-    res <<= 1U;
-  }
-
-  return res;
-}
-
-// rounds value down to the nearest power of 2 such that the result
-// is less or equal to the input value. Never returns zero
-unsigned floor_2(unsigned val) {
-  const unsigned res = ceil_2(val);
-
-  if (res < 2U) {
-    return res;
-  }
-  return res == val ? res : res >> 1U;
-}
-
+/**
+ * @brief Determines the size of the CUDA execution block as the minimum of the three values:
+ *        - max number of threads per block
+ *        - number of elements in the array to sort
+ *        - number of elements which can be accommodated in the shared memory of the block
+ *
+ * @param data_size The number of elements in the array to sort. Must be a power of 2
+ * @param max_threads_per_block Maximum number of threads per CUDA execution block
+ * @param shared_mem_per_block Shared memory in bytes per CUDA execution block
+ * @return The size of the CUDA thread block
+ * @note Implicitly assumed type of the array element is int.
+ * @note The size of the block is selected in such a way, that bitonic_shared kernel can be executed conveniently.
+ */
 unsigned get_block_size(unsigned data_size, unsigned max_threads_per_block, unsigned shared_mem_per_block) {
+  using namespace bitonic::utilities;
   // we assume that data_size is already a power of two
-  const unsigned limit = std::min(floor_2(max_threads_per_block), floor_2(shared_mem_per_block / sizeof(int)));
-  return std::min(limit, data_size);
+  const size_t limit = std::min(floor_2(max_threads_per_block), floor_2(shared_mem_per_block / sizeof(int)));
+  return static_cast<unsigned>(std::min(limit, static_cast<size_t>(data_size)));
 }
-}  // anonymous namespace
+} // anonymous namespace
 
 namespace bitonic {
 __host__ void sort(int *d_data, unsigned data_size, const cudaDeviceProp &properties) {
@@ -136,4 +131,28 @@ __host__ void sort(int *d_data, unsigned data_size, const cudaDeviceProp &proper
     bitonic_global(d_data, data_size, grid_size, block_size);
   }
 }
-}  // namespace bitonic
+
+namespace utilities {
+size_t ceil_2(unsigned val) {
+  if (val <= 1U) {
+    return 1U;
+  }
+
+  size_t res = 2U;
+  while (res < val) {
+    res <<= 1U;
+  }
+
+  return res;
+}
+
+size_t floor_2(unsigned val) {
+  const size_t res = ceil_2(val);
+
+  if (res < 2U) {
+    return res;
+  }
+  return res == val ? res : res >> 1U;
+}
+} // namespace utilities
+} // namespace bitonic
