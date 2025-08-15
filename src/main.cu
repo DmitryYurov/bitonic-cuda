@@ -2,7 +2,7 @@
 #include <iostream>
 #include <random>
 
-#include "bitonic.cuh"
+#include "../includes/bitonic.cuh"
 
 bool checkCudaError(cudaError_t err) {
   if (err != cudaSuccess) {
@@ -13,28 +13,51 @@ bool checkCudaError(cudaError_t err) {
   return true;
 }
 
+template <typename Deleter> using cuda_ptr = std::unique_ptr<int[], Deleter>; /// A smart point to handle cuda-side arrays
+
+/**
+ * @brief Allocates an array of integers on the device side and return cuda_ptr to it.
+ *
+ * @param size The size of the array of integers to allocate
+ * @return a smart pointer to the allocated array, empty in case of allocation failure
+ */
+auto allocate_device_memory(size_t size) {
+  auto deleter = [](int *ptr) {
+    if (ptr != nullptr)
+      cudaFree(ptr);
+  };
+
+  auto result = cuda_ptr<decltype(deleter)>(nullptr, std::move(deleter));
+  int *device_data = nullptr;
+  if (checkCudaError(cudaMalloc(&device_data, size * sizeof(int)))) {
+    result.reset(device_data);
+  }
+
+  return result;
+}
+
 // runs bitonic sort, measures its performance and compares it to std::sort
 void run_sort(std::vector<int> to_sort, const cudaDeviceProp &device_prop) {
   const size_t data_size = to_sort.size();
 
-  int *device_data = nullptr;
-  if (!checkCudaError(cudaMalloc(&device_data, data_size * sizeof(int)))) {
+  auto device_data = allocate_device_memory(data_size);
+  if (device_data == nullptr) {
+    std::cerr << "Failed to allocate device memory" << std::endl;
     return;
   }
-  if (!checkCudaError(cudaMemcpy(device_data, to_sort.data(), data_size * sizeof(int), cudaMemcpyHostToDevice))) {
+
+  if (!checkCudaError(cudaMemcpy(device_data.get(), to_sort.data(), data_size * sizeof(int), cudaMemcpyHostToDevice))) {
     return;
   }
 
   const auto cuda_start = std::chrono::high_resolution_clock::now();
-  bitonic::sort(device_data, data_size, device_prop);
+  bitonic::sort(device_data.get(), data_size, device_prop);
 
-  cudaDeviceSynchronize();  // wait for all CUDA operations to finish
+  cudaDeviceSynchronize(); // wait for all CUDA operations to finish
   const auto cuda_end = std::chrono::high_resolution_clock::now();
 
   auto sort_result = std::vector<int>(data_size, 0);
-  cudaMemcpy(sort_result.data(), device_data, data_size * sizeof(int), cudaMemcpyDeviceToHost);
-
-  cudaFree(device_data);
+  cudaMemcpy(sort_result.data(), device_data.get(), data_size * sizeof(int), cudaMemcpyDeviceToHost);
 
   // running std::sort for comparison
   const auto cpu_start = std::chrono::high_resolution_clock::now();

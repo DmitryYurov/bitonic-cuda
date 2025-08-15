@@ -1,4 +1,4 @@
-#include "bitonic.cuh"
+#include "../includes/bitonic.cuh"
 
 #include <chrono>
 
