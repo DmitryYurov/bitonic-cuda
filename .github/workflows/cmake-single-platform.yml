@@ -26,10 +26,10 @@ jobs:
         sudo apt-get update
         sudo apt-get -y install cuda-toolkit-13-0
 
-    - name: Configure CMak
+    - name: Configure CMake
       run: |
         which nvcc
-        cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}
+        # cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}
 
     - name: Build
       # Build your program with the given configuration
