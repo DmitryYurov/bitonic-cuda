@@ -1,3 +1,5 @@
+[![Ubuntu 24.04](https://github.com/DmitryYurov/bitonic-cuda/actions/workflows/cmake-single-platform.yml/badge.svg)](https://github.com/DmitryYurov/bitonic-cuda/actions/workflows/cmake-single-platform.yml)
+
 # Bitonic Sort
 
 This project implements the [bitonic sorting algorithm](https://en.wikipedia.org/wiki/Bitonic_sorter) using CUDA.
